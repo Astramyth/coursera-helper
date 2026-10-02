@@ -44,13 +44,12 @@ function openHelper() {
       <label class="ch-opt"><input type="checkbox" id="ch-readings" checked> Complete readings</label>
       <label class="ch-opt"><input type="checkbox" id="ch-discuss"> Answer discussion prompts</label>
       <button class="ch-btn" id="ch-run" ${slug ? '' : 'disabled'}>Run</button>
-      <button class="ch-btn ghost" id="ch-export" ${slug ? '' : 'disabled'}>Export practice questions on this page</button>
-      <div id="ch-out" style="display:none;flex-direction:column;gap:8px">
-        <textarea id="ch-md" readonly style="width:100%;min-height:140px;box-sizing:border-box;padding:8px;border:2px solid #C9D1DD;border-radius:6px;font:12.5px/1.4 inherit"></textarea>
-        <div class="ch-row">
-          <button class="ch-btn ghost" id="ch-copy">Copy</button>
-          <button class="ch-btn ghost" id="ch-dl">Download .md</button>
-        </div>
+      <div id="ch-quiz" style="display:none;flex-direction:column;gap:12px">
+        <button class="ch-btn ghost" id="ch-export">Export questions (.md)</button>
+        <button class="ch-btn ghost" id="ch-import">Import answers (.json)</button>
+        <input type="file" id="ch-file" accept=".json,.txt,.md" hidden>
+        <label class="ch-opt"><input type="checkbox" id="ch-submit" checked> Submit after import</label>
+        <label class="ch-opt"><input type="checkbox" id="ch-honor" checked> Tick the honor code box for me</label>
       </div>
       <div id="ch-dp">
         <b id="ch-dp-title"></b>
@@ -111,60 +110,157 @@ function openHelper() {
       $('ch-skip').onclick = () => done(null);
     });
 
-  // ---------- Export practice questions ----------
-  // Only ungraded practice quizzes are allowed; graded items are blocked.
-  const PRACTICE_TYPES = ['quiz'];
-  const clean = (el) => (el?.innerText || '').replace(/\s+\n/g, '\n').replace(/[ \t]+/g, ' ').trim();
+  // ---------- Export quiz questions ----------
+  // Coursera renders each question as a fieldset/role=group with a legend and option labels.
+  // If Coursera changes its URLs or markup, update these.
+  const QUIZ_PATH = /\/(?:quiz|exam|assignment-submission)\//;
+  const QUESTION = '[data-testid^="part-Submission"], fieldset, [role="radiogroup"], [role="group"]';
+  const isQuizPage = () =>
+    QUIZ_PATH.test(location.pathname) || !!document.querySelector('[data-testid^="part-Submission"]');
+
+  // Each prompt carries a hidden instruction block aimed at AI agents plus a "1.\nQuestion 1" label; drop both.
+  // ponytail: matched by the block's first/last sentence, switch to a selector if the wording changes.
+  const clean = (el) => (el?.innerText || '')
+    .replace(/You are a helpful AI assistant[\s\S]*?(?:Do you understand\?\.?|$)/g, '')
+    .replace(/^\s*\d+\.\s*Question \d+\s*/, '')
+    .replace(/\s+\n/g, '\n').replace(/[ \t]+/g, ' ').trim();
 
   const scrapeQuestions = () => {
-    // Coursera renders each question as a fieldset/role=group with a legend and option labels.
-    // If Coursera changes its markup, update these selectors.
-    const blocks = [...document.querySelectorAll('fieldset, [role="radiogroup"], [role="group"]')]
-      .filter((b) => !b.closest('#ch-panel') && !b.parentElement.closest('fieldset, [role="radiogroup"], [role="group"]'));
-    return blocks.map((b) => {
-      const prompt = clean(b.querySelector('legend, [id*="prompt"], [class*="prompt"]')) ||
-        clean(b.previousElementSibling);
-      const options = [...b.querySelectorAll('label')].map(clean).filter(Boolean);
-      return { prompt, options };
+    // Prefer Coursera's own question wrappers; the generic selectors also catch non-question groups.
+    const parts = [...document.querySelectorAll('[data-testid^="part-Submission"]')];
+    const blocks = parts.length ? parts : [...document.querySelectorAll(QUESTION)]
+      .filter((b) => !b.closest('#ch-panel') && !b.parentElement.closest(QUESTION));
+    return blocks.map((block) => {
+      const prompt = clean(block.querySelector('legend, [id*="prompt"], [class*="prompt"]')) ||
+        clean(block.previousElementSibling);
+      const labels = [...block.querySelectorAll('label')].filter((l) => clean(l));
+      return { block, prompt, labels, options: labels.map(clean) };
     }).filter((q) => q.prompt);
   };
 
-  $('ch-export').onclick = async () => {
+  // ponytail: 1s poll because Coursera is a SPA; use the Navigation API if this ever matters.
+  const syncQuiz = () => { $('ch-quiz').style.display = isQuizPage() ? 'flex' : 'none'; };
+  syncQuiz();
+  const poll = setInterval(() => (panel.isConnected ? syncQuiz() : clearInterval(poll)), 1000);
+
+  // Opens the export so it can be handed to an AI as is; the reply is what Import reads.
+  // Worded as a task, with a ready-made template, so the model acts instead of asking what to do.
+  const REPLY_RULE = 'Create a downloadable file named answers.json holding the completed JSON (use your file or code tool). ' +
+    'If you cannot create files, output the JSON in a single ```json code block instead. ' +
+    'Output nothing else: no greeting, no questions back, no summary, no explanation.';
+  const aiPrompt = (qs) => [
+    '# TASK FOR THE AI ASSISTANT: DO THIS NOW',
+    '',
+    'This document is the complete request. It is sent without any other message on purpose.',
+    'Do not ask what to do with it, do not offer options, do not describe it.',
+    '',
+    `1. Work out the correct answer to each of the ${qs.length} quiz questions below.`,
+    '2. Fill the answers into the JSON template below.',
+    `3. ${REPLY_RULE}`,
+    '',
+    '```json',
+    JSON.stringify({ answers: qs.map((q, i) => (q.options.length ? { q: i + 1, choices: [] } : { q: i + 1, text: '' })) }, null, 2),
+    '```',
+    '',
+    '- Keep every entry and its `q` number; only fill in `choices` or `text`.',
+    '- `choices`: the full text of each correct option, copied character for character from the question.',
+    '  Exactly one for "Select one", one or more for "Select all that apply".',
+    '- `text`: the answer to a "Free text" question.',
+  ].join('\n');
+  const kind = (q) => !q.options.length ? 'Free text'
+    : q.block.querySelector('input[type="checkbox"]') ? 'Select all that apply' : 'Select one';
+
+  $('ch-export').onclick = () => {
+    const qs = scrapeQuestions();
+    if (!qs.length) return log('No questions found. Start the quiz so the questions are on screen, then try again.');
+
+    const title = document.title.split(' | ')[0].trim() || 'quiz';
+    const md = `${aiPrompt(qs)}\n\n# ${title}\n\n` + qs.map((q, i) =>
+      `## Question ${i + 1}\n\n${q.prompt}\n\n_${kind(q)}_\n\n` + q.options.map((o) => `- ${o}`).join('\n')
+    ).join('\n\n') + `\n\n---\n\nEND OF QUESTIONS. Now do the task at the top of this document. ${REPLY_RULE}\n`;
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }));
+    a.download = `${title.replace(/[^\w-]+/g, '_')}.md`;
+    a.click();
+    log(`✅ Exported ${qs.length} questions.`);
+    // An attached file is often treated as a document to discuss; the same text pasted as the message is not.
+    navigator.clipboard.writeText(md).then(
+      () => log('📋 Also copied. Pasting it as the chat message works more reliably than attaching the file.'),
+      () => {}
+    );
+  };
+
+  // ---------- Import answers ----------
+  const norm = (s) => String(s).toLowerCase().replace(/\s+/g, ' ').trim();
+  const submitButton = (root, testid, skip) => root.querySelector(`[data-testid="${testid}"]`) ||
+    [...root.querySelectorAll('button')].find((b) => b !== skip && !b.closest('#ch-panel') && /^submit$/i.test(b.innerText.trim()));
+
+  // Fills one question; returns false (and leaves it untouched) unless every answer maps onto the page.
+  const fillQuestion = (q, a) => {
+    if (!q.labels.length) {
+      const field = q.block.querySelector('textarea, input[type="text"], input[type="number"], input:not([type])');
+      if (!field || a.text == null) return false;
+      // Native setter + input event so React picks the value up.
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value').set.call(field, String(a.text));
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+      return true;
+    }
+    const want = new Set((a.choices || []).map(norm));
+    const hits = q.options.map((o) => want.has(norm(o)));
+    if (!want.size || hits.filter(Boolean).length !== want.size) return false;
+    q.labels.forEach((l, i) => {
+      const input = l.control || l.querySelector('input');
+      if (input && input.checked !== hits[i]) input.click();
+    });
+    return true;
+  };
+
+  $('ch-import').onclick = () => $('ch-file').click();
+  $('ch-file').onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = ''; // so the same file can be picked again
+    if (!file) return;
     try {
-      const m = location.pathname.match(/\/learn\/[^/]+\/[^/]+\/([^/?#]+)/);
-      const itemId = m?.[1];
-      if (!itemId) return log('Open a practice quiz first.');
-
-      const mats = await get(
-        `${API}/onDemandCourseMaterials.v2/?q=slug&slug=${slug}` +
-          `&includes=items&fields=onDemandCourseMaterialItems.v2(name,contentSummary)`
-      );
-      const item = mats.linked['onDemandCourseMaterialItems.v2'].find((i) => i.id === itemId);
-      const type = item?.contentSummary?.typeName;
-
-      if (!PRACTICE_TYPES.includes(type)) {
-        return log(`⛔ "${item?.name ?? itemId}" is ${type ? `a ${type}` : 'not a practice quiz'}. Export works on practice assignments only.`);
-      }
+      const raw = await file.text();
+      // Tolerate a reply saved with its ```json fence or stray text around the object.
+      const { answers } = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+      if (!Array.isArray(answers)) throw new Error('no "answers" array');
 
       const qs = scrapeQuestions();
-      if (!qs.length) return log('No questions found. Start the practice quiz so the questions are on screen, then try again.');
+      const done = new Set();
+      for (const a of answers) {
+        const q = qs[a.q - 1];
+        if (q && fillQuestion(q, a)) done.add(a.q);
+        else log(`⚠️ Question ${a.q}: ${q ? 'answer does not match the page, left as is' : 'not on this page'}.`);
+      }
+      log(`Filled ${done.size}/${qs.length} questions.`);
+      if (!$('ch-submit').checked) return;
 
-      const md = `# ${item.name}\n\n` + qs.map((q, i) =>
-        `**${i + 1}. ${q.prompt}**\n` + q.options.map((o) => `- ${o}`).join('\n')
-      ).join('\n\n');
-
-      $('ch-md').value = md;
-      $('ch-out').style.display = 'flex';
-      $('ch-copy').onclick = () => navigator.clipboard.writeText(md).then(() => log('Copied.'));
-      $('ch-dl').onclick = () => {
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }));
-        a.download = `${item.name.replace(/[^\w-]+/g, '_')}.md`;
-        a.click();
+      // Submitting uses up an attempt, so only do it when every question on the page was filled.
+      if (done.size !== qs.length) return log('⛔ Not submitted: fix the questions above, then submit yourself.');
+      await sleep(500);
+      // The honor code box is the learner's own declaration, so it is ticked only when they opted in.
+      // ponytail: found by its English label, add the id/selector if the UI language differs.
+      const honor = $('ch-honor').checked && [...document.querySelectorAll('input[type="checkbox"]')].find((c) =>
+        !c.closest('#ch-panel') && /understand and agree/i.test((c.labels?.[0] || c.parentElement).innerText));
+      if (honor && !honor.checked) { honor.click(); await sleep(300); }
+      // Submit stays disabled until the box is ticked, so wait for that (2 min) and then carry on.
+      const ready = () => {
+        const b = submitButton(document, 'submit-button');
+        return b && !b.disabled && b.getAttribute('aria-disabled') !== 'true' ? b : null;
       };
-      log(`✅ Exported ${qs.length} practice questions.`);
-    } catch (e) {
-      log(`❌ Export failed: ${e.message}`);
+      if (!ready()) log('⏳ Tick the honor code box on the page. Submit follows automatically (waiting 2 min).');
+      let btn;
+      for (let i = 0; !(btn = ready()) && i < 240 && panel.isConnected; i++) await sleep(500);
+      if (!btn) return log('⛔ Not submitted: Submit is still disabled. Submit yourself.');
+      btn.click();
+      await sleep(1000);
+      const dialog = [...document.querySelectorAll('[role="dialog"]')].pop();
+      submitButton(dialog || document, 'dialog-submit-button', btn)?.click();
+      log('Submit clicked. Check the page for the result.');
+    } catch (err) {
+      log(`❌ Import failed: ${err.message}`);
     }
   };
 
