@@ -25,7 +25,7 @@ Course Helper adds a small floating panel to any `coursera.org/learn/...` page. 
   <img src="docs/screenshot.png" alt="Course Helper panel on a Coursera course page" width="360">
 </p>
 
-It is plain JavaScript with no dependencies and no build step. Clone it, load it, use it.
+It is plain JavaScript with no dependencies and no build step. Download it, load it, use it.
 
 ## Features
 
@@ -41,19 +41,15 @@ It is plain JavaScript with no dependencies and no build step. Clone it, load it
 
 ## Installation
 
-Course Helper is not on the Chrome Web Store, so you load it as an unpacked extension. Pick **one** of the two ways to get the files.
+Course Helper is not on the Chrome Web Store, so you load it as an unpacked extension.
 
-### Option A: Clone with Git
+### Download the latest release
 
-```bash
-git clone https://github.com/Astramyth/coursera-helper.git
-```
-
-### Option B: Download the ZIP
-
-1. Open the [repository page](https://github.com/Astramyth/coursera-helper).
-2. Click **Code → Download ZIP**, or [download it directly](https://github.com/Astramyth/coursera-helper/archive/refs/heads/main.zip).
+1. Open the [latest release](https://github.com/Astramyth/coursera-helper/releases/latest).
+2. Under **Assets**, download **Source code (zip)**.
 3. Unzip it to a folder you will keep. Chrome reads the extension from that folder, so do not delete or move it afterwards.
+
+> Install from a release only. The code on the `main` branch is work in progress and may be broken.
 
 ### Load the extension in Chrome
 
@@ -63,7 +59,7 @@ git clone https://github.com/Astramyth/coursera-helper.git
 4. Select the folder that contains `manifest.json`.
 5. Optional: click the puzzle icon in the toolbar and pin **Course Helper**.
 
-> To update later, run `git pull` (or replace the folder with a fresh ZIP), then click the reload icon on the extension card in `chrome://extensions`.
+> To update later, download the newest [release](https://github.com/Astramyth/coursera-helper/releases/latest), replace the folder with it, then click the reload icon on the extension card in `chrome://extensions`.
 
 ## Usage
 
