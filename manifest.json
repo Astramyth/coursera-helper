@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Course Helper",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Mark videos and readings complete, answer discussion prompts, and export quiz questions to Markdown.",
   "permissions": ["scripting", "storage", "downloads"],
   "host_permissions": ["https://www.coursera.org/*"],
