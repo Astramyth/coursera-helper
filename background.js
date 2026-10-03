@@ -15,10 +15,15 @@ chrome.action.onClicked.addListener(async (tab) => {
 // the content script in the work tab, so the batch carries on when this worker is stopped and restarted.
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
   if (msg?.t === 'chq-whoami') reply(sender.tab?.id);
+  else if (msg?.t === 'chq-sleep') {
+    // Timer for the work tab: page timers are throttled in a background tab, this one is not.
+    setTimeout(reply, msg.ms);
+    return true;
+  }
   else if (msg?.t === 'chq-download') {
     chrome.downloads.download({
       url: 'data:text/markdown;charset=utf-8,' + encodeURIComponent(msg.md),
-      filename: 'quizzes.md',
+      filename: 'quizzes-v2.md',
       conflictAction: 'uniquify',
     }).then((downloadId) => reply({ downloadId }), (error) => reply({ error: error.message }));
     return true;

@@ -1,0 +1,57 @@
+.history/
+test/
+
+# AI assistants and agent tooling
+.agent/
+.agents/
+.claude/
+.codex/
+.cursor/
+.cursorrules
+.cursorignore
+.windsurf/
+.windsurfrules
+.gemini/
+.aider*
+.continue/
+.roo/
+.clinerules
+.kiro/
+.github/copilot-instructions.md
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+GEMINI.md
+graphify-out/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Secrets and local config
+.env
+.env.*
+*.pem
+*.key
+
+# Extension builds
+*.crx
+*.zip
+dist/
+
+# Quiz exports and answers (course content, personal data)
+quizzes*.md
+answer*.json
+*.har
+
+# Logs and temp
+*.log
+*.tmp

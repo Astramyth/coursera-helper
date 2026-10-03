@@ -25,6 +25,9 @@ function openHelper() {
     #ch-course{color:#6B7A90;font-size:13px}
     #ch-log{background:#F3F5F8;border-radius:6px;padding:8px 10px;font-size:12.5px;max-height:180px;
       overflow:auto;white-space:pre-wrap;min-height:40px}
+    #ch-log .ch-ok{margin:10px 0;color:#1F8A70;font-weight:600}
+    #ch-log .ch-big{margin:10px 0;font-size:15px;font-weight:700;color:#1F5FBF}
+    #ch-log .ch-end{color:#1F8A70}
     #ch-dp{display:none;flex-direction:column;gap:8px;border-top:2px dashed #C9D1DD;padding-top:12px}
     #ch-q{background:#FFF8E1;border-left:4px solid #F2B705;padding:8px 10px;border-radius:4px;max-height:160px;overflow:auto}
     #ch-answer{width:100%;min-height:90px;box-sizing:border-box;padding:8px;border:2px solid #C9D1DD;
@@ -37,7 +40,7 @@ function openHelper() {
   const panel = document.createElement('div');
   panel.id = 'ch-panel';
   panel.innerHTML = `
-    <div id="ch-head"><b>Course helper</b><button id="ch-close" aria-label="Close">×</button></div>
+    <div id="ch-head"><b>Course helper · v2</b><button id="ch-close" aria-label="Close">×</button></div>
     <div id="ch-body">
       <div id="ch-course">${slug ? `Course: ${slug}` : 'Open a course page (/learn/…) first.'}</div>
       <label class="ch-opt"><input type="checkbox" id="ch-videos" checked> Complete videos</label>
@@ -49,10 +52,10 @@ function openHelper() {
         <button class="ch-btn ghost" id="ch-stop">Stop</button>
       </div>
       <button class="ch-btn ghost" id="ch-export" style="display:none">Export this quiz (.md)</button>
-      <button class="ch-btn ghost" id="ch-import">Import answer.json</button>
+      <button class="ch-btn ghost" id="ch-import">Import all quiz answers (.json)</button>
       <input type="file" id="ch-file" accept=".json,.txt,.md" hidden>
       <label class="ch-opt"><input type="checkbox" id="ch-submit" checked> Submit after import</label>
-      <label class="ch-opt"><input type="checkbox" id="ch-honor"> Tick the honor code box for me</label>
+      <label class="ch-opt"><input type="checkbox" id="ch-honor"> Tick acknowledgment / honor code boxes</label>
       <div id="ch-dp">
         <b id="ch-dp-title"></b>
         <div id="ch-q"></div>
@@ -69,7 +72,16 @@ function openHelper() {
 
   const $ = (id) => panel.querySelector('#' + id);
   const logEl = $('ch-log');
-  const log = (msg) => { logEl.textContent += '\n' + msg; logEl.scrollTop = logEl.scrollHeight; };
+  // One element per line: headline lines (scan, summary, end) are large and coloured, and each
+  // successful export or submit stands apart from its neighbours.
+  const log = (msg) => {
+    const line = document.createElement('div');
+    line.textContent = msg;
+    line.className = /^🏁/u.test(msg) ? 'ch-big ch-end' : /^(📊|🛑)/u.test(msg) ? 'ch-big'
+      : /^\[(exported|submitted|verified-complete)\]/.test(msg) ? 'ch-ok' : '';
+    logEl.append(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  };
   $('ch-close').onclick = () => { panel.remove(); style.remove(); };
 
   // Draggable header
@@ -112,7 +124,7 @@ function openHelper() {
       $('ch-skip').onclick = () => done(null);
     });
 
-  // ---------- Quiz scanning and practice answer import (logic in quiz.js) ----------
+  // ---------- Quiz scanning and answer import (logic in quiz.js) ----------
   // Quiz URLs only show the export control; quiz.js checks progress before export and type before import.
   // ponytail: 1s poll because Coursera is a SPA; use the Navigation API if this ever matters.
   const syncQuiz = () => { $('ch-export').style.display = CHQ.itemIdFromUrl() ? '' : 'none'; };
@@ -151,6 +163,10 @@ function openHelper() {
     }
   };
 
+  // Off until the learner turns it on; the choice is remembered so it is not silently lost on reload.
+  chrome.storage.local.get('chHonor').then(({ chHonor }) => { $('ch-honor').checked = !!chHonor; });
+  $('ch-honor').onchange = (e) => chrome.storage.local.set({ chHonor: e.target.checked });
+
   $('ch-import').onclick = () => $('ch-file').click();
   $('ch-file').onchange = async (e) => {
     const file = e.target.files[0];
@@ -183,6 +199,9 @@ function openHelper() {
       );
       const items = mats.linked['onDemandCourseMaterialItems.v2'];
       log(`Found ${items.length} items.`);
+      // Scan & Export first: it runs on its own in the work tab (quiz.js opens all unfinished assessment
+      // candidates, including graded quizzes), so it must not wait behind the discussion prompts below.
+      if (doPractice) await CHQ.startExport(slug, log);
 
       for (const item of items) {
         if (halt) break;
@@ -228,8 +247,6 @@ function openHelper() {
         }
       }
       log(halt ? '🛑 Stopped.' : 'Done. Refresh the page to see progress.');
-      // Scan & Export: quiz.js opens all unfinished assessment candidates, including graded quizzes.
-      if (doPractice && !halt) await CHQ.startExport(slug, log);
     } catch (e) {
       log(`❌ Stopped: ${e.message}`);
     } finally {

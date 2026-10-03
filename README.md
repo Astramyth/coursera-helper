@@ -35,7 +35,7 @@ It is plain JavaScript with no dependencies and no build step. Clone it, load it
 | 📖 | **Complete readings** | Marks every reading item in the current course as done. |
 | 💬 | **Answer discussion prompts** | Shows each prompt, lets you type an answer, and posts it. You can skip any prompt. |
 | 📝 | **Export questions (.md)** | Saves the quiz questions as a Markdown file and copies them to your clipboard, together with instructions and a JSON answer template for an AI assistant. |
-| 📥 | **Import answers (.json)** | Fills the quiz from the `answers.json` your assistant returns. Choices and free-text answers are both supported. |
+| 📥 | **Import all quiz answers (.json)** | Opens every eligible quiz in one work tab and fills it from the `answer.json` your assistant returns. Graded quizzes, choices and text responses are supported. |
 | ✅ | **Submit after import** | Optionally submits the quiz right after the answers are filled. |
 | ☑️ | **Honor code helper** | Optionally ticks the honor code box for you. |
 
@@ -83,26 +83,34 @@ git clone https://github.com/Astramyth/coursera-helper.git
 
 ### Quiz workflow with an AI assistant
 
-Open a quiz page. The quiz buttons appear in the panel.
+1. Select **Scan all unfinished quizzes → .md** and click **Run**. One work tab scans unfinished assessments and downloads `quizzes-v2.md`, including a report of skipped pages. To scan only quizzes, deselect videos, readings and discussion prompts.
+2. Send the new Markdown to your assistant to generate a completed `answer.json`. It includes a template for supported choice and text questions, including graded quizzes.
+3. Set **Submit after import** and **Tick acknowledgment / honor code boxes** as desired before importing. With submission off, answers are filled for your review.
+4. Click **Import all quiz answers (.json)** and select the file once. All matching quizzes in the saved export are queued, opened, filled and optionally submitted in sequence. The panel reports each submission and checks server progress.
 
-1. Click **Export questions (.md)**. A Markdown file is downloaded and the same text is copied to your clipboard.
-2. Paste it into your AI chat (pasting works more reliably than attaching the file).
-3. The assistant replies with an `answers.json` file or a JSON code block. Save it if it is a code block.
-4. Click **Import answers (.json)** and choose that file. The quiz fills in.
-5. Decide whether to keep **Submit after import** and **Tick the honor code box for me** enabled.
+**Export this quiz (.md)** exports only the currently open question page and replaces the saved export with that quiz. Use the course scan above when you want to import all quizzes.
 
 The answers file looks like this:
 
 ```json
 {
-  "answers": [
-    { "q": 1, "choices": [] },
-    { "q": 2, "text": "" }
-  ]
+  "schemaVersion": 2,
+  "batchId": "<copy from exported template>",
+  "courseId": "<copy from exported template>",
+  "quizzes": {
+    "<itemId>": {
+      "answers": [
+        { "questionKey": "<choice question key>", "choices": ["Full option text"] },
+        { "questionKey": "<text question key>", "text": "Your complete response" }
+      ]
+    }
+  }
 }
 ```
 
-Each entry is numbered by question. Multiple-choice questions use `choices`, written-answer questions use `text`. If the assistant wraps the JSON in a code fence or adds extra text, the import still works.
+Keep the exported identifiers unchanged. Multiple-choice questions use `choices`; text questions use `text`. Every question in a quiz needs a valid answer before it can be filled and submitted. Images are exported as references, and their identity distinguishes questions with identical wording. Peer review, uploads and unsupported controls remain recorded for manual completion.
+
+An empty `"quizzes": {}` contains no answers and cannot fill anything. Older schema 1 files must be regenerated: reload the extension and Coursera tab, check that the panel says **Course helper · v2**, scan again, then create `answer.json` from the newly downloaded `quizzes-v2.md` (schema 2). Chrome may add a suffix such as `(1)` to repeated downloads; choose the newest file. If the assistant wraps the JSON in a code fence or adds extra text, the import still works.
 
 ## Disclaimer
 
