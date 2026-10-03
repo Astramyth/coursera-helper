@@ -74,26 +74,36 @@
     const p = progress[itemId];
     if (p?.progressState === 'Completed') return no('already completed');
     if (p && !['NotStarted', 'Started'].includes(p.progressState)) return no(`unknown progress state (${p.progressState})`);
-    if (p?.content?.definition?.submitted) return no('already submitted');
-    if (itemGrades?.some((g) => g.itemId === itemId)) return no('already has a grade');
+    // An attempt that was graded and did not pass may be retaken. Passed, ungraded-but-submitted and
+    // grades without a pass/fail verdict are left alone.
+    const entry = itemGrades?.find((g) => g.itemId === itemId);
+    if (entry && entry.overallOutcome?.isPassed !== false) return no(entry.overallOutcome?.isPassed ? 'already passed' : 'already has a grade');
+    if (!entry && p?.content?.definition?.submitted) return no('already submitted');
     const supported = IMPORT_TYPES.includes(type);
     return { ok: true, name: item.name, type: type || 'unknown',
+      prior: entry ? { grade: typeof entry.overallOutcome.grade === 'number' ? entry.overallOutcome.grade : null } : undefined,
       autoImportEligible: supported, autoImportReason: supported ? undefined : `manual assessment type (${type || 'unknown'})` };
   };
 
-  const coverAction = ({ type, label = '', disabled, hasResult }, mode = 'import') => {
-    if (hasResult || /\b(try again|retake|retry)\b/i.test(label)) return no(`already submitted (button "${label}"); not retaking`);
+  // Whether an earlier attempt may be retaken is decided by the gate from server data (failed only),
+  // so a result banner or a "Try again" button is accepted here.
+  const coverAction = ({ type, label = '', disabled }, mode = 'import') => {
     if (disabled) return no('Start/Resume button is disabled');
     if (mode !== 'export' && !/^(Practice Assignment|Graded Assignment|Quiz|Exam)$/i.test(type || '')) return no(`unsupported cover page type "${type || '?'}"`);
-    if (!/^(start|resume|continue|begin)\b/i.test(label.trim())) return no(`no Start/Resume quiz control (button "${label}")`);
+    if (!/^(start|resume|continue|begin|try again|retake|retry)\b/i.test(label.trim())) return no(`no Start/Resume quiz control (button "${label}")`);
     return { ok: true };
   };
 
   // submitted / completed / passed are three different facts; report each.
-  const outcome = (itemId, prog, grades) => {
+  const outcome = (itemId, prog, grades, prior) => {
     const p = prog?.elements?.[0]?.items?.[itemId];
     const entry = (grades?.linked?.['onDemandCourseViewItemGrades.v1'] || []).find((x) => x.itemId === itemId);
     const g = entry?.overallOutcome;
+    const completed = p?.progressState === 'Completed';
+    const grade = typeof g?.grade === 'number' ? g.grade : null;
+    // ponytail: a retake that scores exactly the old grade without passing is indistinguishable here and
+    // ends as needs-review; compare attempt timestamps if the grades API ever exposes them.
+    if (prior) return { submitted: completed || grade !== prior.grade, completed, passed: g ? g.isPassed === true : null, grade };
     return {
       // The gate refuses items that already have a grade, so a grade entry here comes from this attempt
       // (a failed attempt stays "Started" and would otherwise look unsubmitted).
@@ -479,8 +489,7 @@
       if (btn) {
         const type = cover?.querySelector('[data-testid="cover-page-header-assignment-type"]')?.innerText.trim();
         const action = coverAction({ type, label: btn.innerText.trim(),
-          disabled: btn.disabled || btn.getAttribute('aria-disabled') === 'true',
-          hasResult: !!cover?.querySelector('[data-testid="result-banner"]') }, mode);
+          disabled: btn.disabled || btn.getAttribute('aria-disabled') === 'true' }, mode);
         if (!action.ok) return { ...action, pageText: pageText() };
         if (await stopped()) return { ok: false, status: 'stopped' };
         btn.click();
@@ -652,11 +661,11 @@
     return { ok: true };
   };
   // Waits up to a minute for the server to record the submission; null means it never showed up.
-  const pollOutcome = async (c, itemId) => {
+  const pollOutcome = async (c, itemId, prior) => {
     for (let i = 0; i < 30; i++) {
       await sleep(2000);
       try {
-        const o = outcome(itemId, ...(await Promise.all([fetchProgress(c), fetchGrades(c)])));
+        const o = outcome(itemId, ...(await Promise.all([fetchProgress(c), fetchGrades(c)])), prior);
         if (o.submitted || o.completed) return o;
       } catch { /* transient: keep polling */ }
     }
@@ -812,11 +821,15 @@
     const result = item.tries > 3 ? fallback('the page kept reloading') : await Promise.race([
       runItem({ mode: st.mode, phase: item.phase, snap: batch.quizzes[item.itemId], answers: chqAnswers?.[item.itemId], opts: st.opts }, {
         stopped,
-        gate: () => gate(st, item.itemId, st.mode, cache),
+        gate: async () => {
+          const g = await gate(st, item.itemId, st.mode, cache);
+          if (g.ok) item.prior = g.prior; // grade of an earlier failed attempt; saved with the submitting phase
+          return g;
+        },
         open: () => open(stopped, st.mode),
         collect: () => collect(stopped), fill: (answers) => fill(answers, stopped, st.opts), ready: (honor) => ready(honor, stopped), submit, pageText,
         setPhase: (phase) => { item.phase = phase; return save(); },
-        outcome: () => pollOutcome(st, item.itemId),
+        outcome: () => pollOutcome(st, item.itemId, item.prior),
       }),
       sleep(ITEM_TIMEOUT).then(() => { flags.aborted = true; return fallback('timed out'); }),
     ]).catch((e) => fallback(e.message));
